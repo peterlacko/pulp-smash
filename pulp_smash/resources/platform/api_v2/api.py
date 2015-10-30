@@ -6,13 +6,15 @@ from __future__ import unicode_literals
 
 import requests
 import time
+import string
+import random
+from collections  import defaultdict
 from requests.exceptions import HTTPError
 from pulp_smash.config import get_config
 
 # List of all paths here
-CREATE_REPOSITORY_PATH = "/pulp/api/v2/repositories/"
-REPOSITORY_PATH = "/pulp/api/v2/repositories/{}/"  # .format(<repo_id>)
-REPOSITORY_PATH = "/pulp/api/v2/repositories/{}/"  # .format(<repo_id>)
+REPOSITORY_PATH = "/pulp/api/v2/repositories/"
+REPOSITORY_ID_PATH = "/pulp/api/v2/repositories/" + "{}/"  # .format(<repo_id>)
 POLL_TASK_PATH = "/pulp/api/v2/tasks/{}/"  # .format(<task_id>)
 
 #  Repository related variables
@@ -35,10 +37,21 @@ TASK_ERROR_STATES = {
     'error',
     'timed out',
 }
-TASK_FINISHED_STATES = {
+TASK_SUCCESS_STATES = {
     'finished',
 }
+TASK_RUNNING_STATES = {
+    'running',
+    'suspended',
+    'waiting',
+}
 
+
+def get_random_string(length = 15):
+    """Get random lowercase letters string."""
+    return ''.join(
+        random.choice(string.ascii_lowercase) for i in range(0, length)
+    )
 
 class Repository(object):
     """Provides interface for easy manipulation with pulp repositories.
@@ -62,7 +75,8 @@ class Repository(object):
         """
 
     def __init__(self, **kwargs):
-        self.data_keys = kwargs
+        self.data_keys = defaultdict()
+        self.data_keys.update(kwargs)
         self.last_response = None
         self.cfg = get_config()
 
@@ -75,10 +89,18 @@ class Repository(object):
         """
         self.data_keys.update(kwargs)
         self.last_response = requests.post(
-            self.cfg.base_url + CREATE_REPOSITORY_PATH,
+            self.cfg.base_url + REPOSITORY_PATH,
             json=self.data_keys,
             **self.cfg.get_requests_kwargs()
         )
+
+    def create_rpm_repo(self, **kwargs):
+        """Create RPM repository on pulp server.
+        """
+        if self.data_keys.get('notes') is None:
+            self.data_keys['notes'] = defaultdict()
+        self.data_keys['notes'].update({'_repo-type': 'rpm-repo'})
+        self.create_repo(**kwargs)
 
     def delete_repo(self):
         """Delete repository from pulp server.
@@ -88,7 +110,7 @@ class Repository(object):
         """
         self.last_response = requests.delete(
             self.cfg.base_url +
-            REPOSITORY_PATH.format(self.data_keys['id']),
+            REPOSITORY_ID_PATH.format(self.data_keys['id']),
             **self.cfg.get_requests_kwargs()
         )
 
@@ -98,14 +120,16 @@ class Repository(object):
         should be called in order to make sure that call was succesfull.
         """
         self.last_response = requests.get(
-            self.cfg.base_url + REPOSITORY_PATH.format(self.data_keys['id']),
+            self.cfg.base_url + REPOSITORY_ID_PATH.format(self.data_keys['id']),
             **self.cfg.get_requests_kwargs()
         )
 
-    def update_repo(self,
-                    delta,
-                    importer_config=None,
-                    distributor_configs=None):
+    def update_repo(
+        self,
+        delta,
+        importer_config=None,
+        distributor_configs=None
+    ):
         """Update repository with keys from kwargs.
         After calling this method, <repo>.last_response.raise_for_status()
         and Task.wait_for_tasks(<repo>.last_response)
@@ -123,23 +147,23 @@ class Repository(object):
         if distributor_configs is not None:
             my_delta.update({'distributor_configs': distributor_configs})
         self.last_response = requests.put(
-            self.cfg.base_url + REPOSITORY_PATH.format(self.data_keys['id']),
+            self.cfg.base_url + REPOSITORY_ID_PATH.format(self.data_keys['id']),
             json=my_delta,
             **self.cfg.get_requests_kwargs()
         )
+
+    # def associate_importer(self):
 
 
 class Task(object):
     """Handles tasks related operations. So far only waiting for given tasks
     to immediate finish is implemented.
     """
-    cfg = get_config()
 
     def __init__(self):
-        pass
+        self.cfg = get_config()
 
-    @classmethod
-    def _wait_for_task(cls, task, timeout, frequency):
+    def _wait_for_task(self, task, timeout, frequency):
         """Wait for single task to finish its execution on server.
         :param task: Dictionary containtin task_id and path to task
             on pulp server.
@@ -150,34 +174,23 @@ class Task(object):
         while time.time() <= task_timeout:
             time.sleep(frequency)
             response = requests.get(
-                Task.cfg.base_url +
-                POLL_TASK_PATH.format(task["task_id"]),
-                **Task.cfg.get_requests_kwargs()
+                self.cfg.base_url + POLL_TASK_PATH.format(task["task_id"]),
+                **self.cfg.get_requests_kwargs()
             )
-            try:
-                response.raise_for_status()
-            except HTTPError:
-                break
-            # task finished with error
-            if response.json()["state"] in TASK_ERROR_STATES:
-                raise Exception("Error occured while polling task: ",
-                                response.text)
-            # task finished properly
-            if response.json()["state"] in TASK_FINISHED_STATES:
-                break
+            response.raise_for_status()
+            # task finished (with success or failure)
+            if (response.json()["state"]
+                    in TASK_ERROR_STATES | TASK_SUCCESS_STATES):
+                return response
         # task probably timed out
-        else:
-            raise Exception("Timeout occured while waiting for task: ",
-                            response.text)
 
-    @classmethod
-    def wait_for_tasks(cls, report, timeout=120, frequency=0.5):
+    def wait_for_tasks(self, report, timeout=120, frequency=0.5):
         """Wait for all populated tasks to finish.
         :param report: Call response -- report -- with list of populated tasks.
         :param timeout: Timeout in seconds for each task to complete.
         :param frequency: Task polling frequency in seconds.
         """
-        if not all(key in report.json().keys() for key in REPORT_KEYS):
-            raise Exception("Missing key in Call report: ", report.text)
+        responses = []
+        # all(key in report.json().keys() for key in REPORT_KEYS):
         for task in report.json()["spawned_tasks"]:
-            cls._wait_for_task(task, timeout, frequency)
+            responses.append(self._wait_for_task(task, timeout, frequency))
