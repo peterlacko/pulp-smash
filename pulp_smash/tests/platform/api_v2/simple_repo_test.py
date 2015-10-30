@@ -2,6 +2,12 @@
 """Test for basic repo creating functionality."""
 from __future__ import unicode_literals
 
+import requests
+
+from pulp_smash.resources.helper import get_random_string
+from pulp_smash.config import get_config
+from unittest2 import TestCase
+
 
 class RepoCreateSuccessTestCase(TestCase):
     """Tests for successfull repo creating functionality."""
@@ -9,23 +15,22 @@ class RepoCreateSuccessTestCase(TestCase):
     @classmethod
     def setUpClass(cls):
         """Create repo on pulp server."""
-        cls.repo = Repository(id=cls.__name__)
-        cls.repo.create_repo()
+        cls.cfg = get_config()
+        cls.repo_id = get_random_string()
+        cls.last_response = requests.post(
+            self.cfg.base_url + paths['REPOSITORY_PATH'],
+            json=cls.repo_id,
+            **self.cfg.get_requests_kwargs()
+        )
 
     def test_status_code(self):
         """Test if Create repo returned 201."""
-        self.assertEqual(self.repo.last_response.status_code, 201)
+        self.assertEqual(self.last_response.status_code, 201)
 
     def test_correct_id(self):
         """Test if response contain correct repo id."""
         self.assertEqual(
-            self.repo.last_response.json()['id'],
-            self.__class__.__name__,
-            set(self.repo.last_response.json()))
-
-    @classmethod
-    def tearDownClass(cls):
-        """Delete previously created repository."""
-        cls.repo.delete_repo()
-        cls.repo.last_response.raise_for_status()
-        Task.wait_for_tasks(cls.repo.last_response)
+            self.last_response.json()['id'],
+            self.repo_id,
+            self.last_response.json()
+        )
