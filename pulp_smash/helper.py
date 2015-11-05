@@ -41,7 +41,7 @@ def _wait_for_task(task, cfg, timeout, frequency):
         response.raise_for_status()
         # task finished (with success or failure)
         if response.json()['state'] in TASK_ERROR_STATES | TASK_SUCCESS_STATES:
-            return response
+            return response.json()
     # task probably timed out
 
 
