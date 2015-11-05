@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Test for basic repo creating functionality."""
+"""Helper functions for common functionality."""
 from __future__ import unicode_literals
 
 import string
@@ -7,46 +7,16 @@ import random
 import time
 import requests
 
-paths = {
-    'REPOSITORY_PATH': '/pulp/api/v2/repositories/',
-    'TASK_PATH': '/pulp/api/v2/tasks/',
-}
-
-#  Repository related variables
-ERROR_KEYS = {
-    '_href',
-    'error',
-    'error_message',
-    'exception',
-    'http_status',
-    'traceback',
-}
-
-# Task related variables
-REPORT_KEYS = {
-    'result',
-    'error',
-    'spawned_tasks',
-}
-
-task_states = {
-    'TASK_ERROR_STATES': {
-        'error',
-        'timed out',
-    },
-    'TASK_SUCCESS_STATES': {
-        'finished',
-    },
-    'TASK_RUNNING_STATES': {
-        'running',
-        'suspended',
-        'waiting',
-    }
-}
+from pulp_smash.constants import TASK_PATH
+from pulp_smash.constants import TASK_ERROR_STATES
+from pulp_smash.constants import TASK_SUCCESS_STATES
 
 
 def get_random_string(length=15):
-    """Get random lowercase letters string."""
+    """Get random lowercase letters string.
+    :param length: Length of string.
+    :return: Generated random string.
+    """
     return ''.join(
         random.choice(string.ascii_lowercase) for i in range(0, length)
     )
@@ -64,19 +34,13 @@ def _wait_for_task(task, cfg, timeout, frequency):
         time.sleep(frequency)
         response = requests.get(
             (
-                cfg.base_url +
-                paths['TASK_PATH'] +
-                '{}/'.format(task["task_id"])
+                cfg.base_url + TASK_PATH + '{}/'.format(task["task_id"])
             ),
             **cfg.get_requests_kwargs()
         )
         response.raise_for_status()
         # task finished (with success or failure)
-        if (
-            response.json()['state']
-            in task_states['TASK_ERROR_STATES'] |
-            task_states['TASK_SUCCESS_STATES']
-        ):
+        if response.json()['state'] in TASK_ERROR_STATES | TASK_SUCCESS_STATES:
             return response
     # task probably timed out
 

@@ -3,11 +3,11 @@
 from __future__ import unicode_literals
 
 import requests
-
-from pulp_smash.resources.helper import paths, ERROR_KEYS
-from pulp_smash.resources.helper import get_random_string, wait_for_tasks
-from pulp_smash.config import get_config
 from unittest2 import TestCase
+
+from pulp_smash.constants import ERROR_KEYS, REPOSITORY_PATH
+from pulp_smash.helper import get_random_string, wait_for_tasks
+from pulp_smash.config import get_config
 
 
 class RepoCreateSuccessTestCase(TestCase):
@@ -19,7 +19,7 @@ class RepoCreateSuccessTestCase(TestCase):
         cls.cfg = get_config()
         cls.repo_id = get_random_string()
         cls.last_response = requests.post(
-            cls.cfg.base_url + paths['REPOSITORY_PATH'],
+            cls.cfg.base_url + REPOSITORY_PATH,
             json={'id': cls.repo_id},
             **cls.cfg.get_requests_kwargs()
         )
@@ -45,7 +45,7 @@ class RepoCreateSuccessTestCase(TestCase):
         """Delete previously created repository."""
         cls.last_response = requests.delete(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] + '{}/'.format(cls.repo_id),
+            REPOSITORY_PATH + '{}/'.format(cls.repo_id),
             **cls.cfg.get_requests_kwargs()
         )
         cls.last_response.raise_for_status()
@@ -61,7 +61,7 @@ class RepoCreateMissingIdTestCase(TestCase):
         cls.cfg = get_config()
         cls.repo_description = get_random_string()
         cls.last_response = requests.post(
-            cls.cfg.base_url + paths['REPOSITORY_PATH'],
+            cls.cfg.base_url + REPOSITORY_PATH,
             json={'description': cls.repo_description},
             **cls.cfg.get_requests_kwargs()
         )
@@ -77,7 +77,7 @@ class RepoCreateMissingIdTestCase(TestCase):
     def test_body(self):
         """Test if request returned correct body."""
         self.assertLessEqual(
-            ERROR_KEYS,
+            set(ERROR_KEYS),
             set(self.last_response.json().keys()),
             self.last_response.json()
         )
@@ -95,7 +95,7 @@ class RepoExistsTestCase(TestCase):
         # string representing id, disp. name and description of repo
         cls.repo_id = get_random_string()
         cls.last_response = requests.post(
-            cls.cfg.base_url + paths['REPOSITORY_PATH'],
+            cls.cfg.base_url + REPOSITORY_PATH,
             json={
                 'id': cls.repo_id,
                 'display_name': cls.repo_id,
@@ -106,7 +106,7 @@ class RepoExistsTestCase(TestCase):
         cls.last_response.raise_for_status()
         cls.last_response = requests.get(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] +
+            REPOSITORY_PATH +
             '{}/'.format(cls.repo_id),
             **cls.cfg.get_requests_kwargs()
         )
@@ -144,7 +144,7 @@ class RepoExistsTestCase(TestCase):
         """Delete previously created repository."""
         cls.last_response = requests.delete(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] + '{}/'.format(cls.repo_id),
+            REPOSITORY_PATH + '{}/'.format(cls.repo_id),
             **cls.cfg.get_requests_kwargs()
         )
         cls.last_response.raise_for_status()
@@ -160,20 +160,20 @@ class RepoDeleteTestCase(TestCase):
         cls.cfg = get_config()
         cls.repo_id = get_random_string()
         cls.last_response = requests.post(
-            cls.cfg.base_url + paths['REPOSITORY_PATH'],
+            cls.cfg.base_url + REPOSITORY_PATH,
             json={'id': cls.repo_id},
             **cls.cfg.get_requests_kwargs()
         )
         cls.last_response.raise_for_status()
         cls.last_response = requests.delete(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] + '{}/'.format(cls.repo_id),
+            REPOSITORY_PATH + '{}/'.format(cls.repo_id),
             **cls.cfg.get_requests_kwargs()
         )
         cls.last_response.raise_for_status()
         cls.last_response = requests.get(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] +
+            REPOSITORY_PATH +
             '{}/'.format(cls.repo_id),
             **cls.cfg.get_requests_kwargs()
         )
@@ -189,7 +189,7 @@ class RepoDeleteTestCase(TestCase):
     def test_body(self):
         """Test if body contains all data keys."""
         self.assertLessEqual(
-            ERROR_KEYS,
+            set(ERROR_KEYS),
             set(self.last_response.json().keys()),
             self.last_response.json()
         )
@@ -204,7 +204,7 @@ class RepoUpdateTestCase(TestCase):
         cls.cfg = get_config()
         cls.repo_id = get_random_string()
         cls.last_response = requests.post(
-            cls.cfg.base_url + paths['REPOSITORY_PATH'],
+            cls.cfg.base_url + REPOSITORY_PATH,
             json={'id': cls.repo_id},
             **cls.cfg.get_requests_kwargs()
         )
@@ -215,7 +215,7 @@ class RepoUpdateTestCase(TestCase):
         }
         cls.last_response = requests.put(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] +
+            REPOSITORY_PATH +
             '{}/'.format(cls.repo_id),
             json=cls.delta,
             **cls.cfg.get_requests_kwargs()
@@ -241,7 +241,7 @@ class RepoUpdateTestCase(TestCase):
         """Delete previously created repository."""
         cls.last_response = requests.delete(
             cls.cfg.base_url +
-            paths['REPOSITORY_PATH'] + '{}/'.format(cls.repo_id),
+            REPOSITORY_PATH + '{}/'.format(cls.repo_id),
             **cls.cfg.get_requests_kwargs()
         )
         cls.last_response.raise_for_status()
