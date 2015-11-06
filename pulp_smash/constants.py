@@ -82,3 +82,5 @@ TASK_PATH = '/pulp/api/v2/tasks/'
 .. _Task Management:
     http://pulp.readthedocs.org/en/latest/dev-guide/integration/rest-api/dispatch/task.html
 """
+
+RPM_REPO_FEED = "https://repos.fedorapeople.org/repos/pulp/pulp/demo_repos/zoo/"
