@@ -177,7 +177,7 @@ def poll_task(server_config, href):
         complete.
 
     """
-    poll_limit = 10
+    poll_limit = 100
     poll_counter = 0
     while True:
         response = requests.get(
