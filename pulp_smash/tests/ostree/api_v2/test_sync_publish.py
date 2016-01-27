@@ -5,18 +5,18 @@ Done:
     * Create repo
     * Sync repo with invalid feed or branch will fail
     * Create repo with valid feed and branch, add another branch and sync
-    * Create and sync repo, copy its content to another repo, check they match
+    * Create repo with feed and branch, add branch, sync repo,
+      copy its content to another repo, check they match
 TODO:
-    * Test that all branches were synced
-    * Test updating a valid feed with an invalid branch
-    * Extend tests of responses
-    * Download and verify content
+    * Test that repo contains content from both branches
 """
 
 from __future__ import unicode_literals
 
+import pulp_smash.cli
 import requests
 
+from pulp_smash.constants import REPOSITORY_PATH
 from itertools import chain
 from pulp_smash.config import get_config
 from pulp_smash.utils import (
@@ -25,15 +25,18 @@ from pulp_smash.utils import (
     get_importers,
     handle_response,
     poll_spawned_tasks,
+    publish_repository,
     sync_repository,
     uuid4,
 )
 from unittest2 import TestCase
 from urlparse import urljoin
 
-_VALID_FEED = "http://dl.fedoraproject.org/pub/fedora/linux/atomic/23/"
-_VALID_BRANCH1 = "fedora-atomic/f23/x86_64/docker-host"
-_VALID_BRANCH2 = "fedora-atomic/f23/x86_64/testing/docker-host"
+_VALID_FEED = "http://dl.fedoraproject.org/pub/fedora/linux/atomic/21/"
+_VALID_BRANCHES = tuple((
+    "fedora-atomic/f21/x86_64/updates/docker-host",
+    "fedora-atomic/f21/x86_64/updates-testing/docker-host",
+))
 
 
 class _BaseTestCase(TestCase):
@@ -48,8 +51,8 @@ class _BaseTestCase(TestCase):
     @classmethod
     def tearDownClass(cls):
         """Delete created resources."""
-        for attrs in cls.attrs_iter:
-            delete(cls.cfg, attrs['_href'])
+        # for attrs in cls.attrs_iter:
+        #    delete(cls.cfg, attrs['_href'])
 
 
 def _gen_ostree_repo_body():
@@ -77,7 +80,7 @@ def _add_ostree_web_distributor(server_config, href, responses=None):
             'distributor_config': {
                 'http': True,
                 'https': True,
-                'relative_url': '/' + uuid4(),
+                'relative_path': '/' + uuid4(),
             },
         },
         **server_config.get_requests_kwargs()
@@ -133,6 +136,7 @@ class CreateTestCase(_BaseTestCase):
         super(CreateTestCase, cls).setUpClass()
         cls.bodies = tuple((_gen_ostree_repo_body() for _ in range(2)))
         cls.bodies[1]['importer_config'] = {'feed': uuid4()}  # should pass??
+        # RPM plugin doesn't validate url, puppet plugin does
         cls.attrs_iter = tuple((
             create_repository(cls.cfg, body) for body in cls.bodies
         ))
@@ -171,27 +175,17 @@ class CreateTestCase(_BaseTestCase):
                 self.assertEqual(body['importer_' + key], importers[0][key])
 
 
-class SyncUpdateValidFeedTestCase(_BaseTestCase):
-    """If a valid feed is given, the sync completes with no reported errors.
-
-    """
+class SyncValidFeedTestCase(_BaseTestCase):
+    """With a valid feed given, the sync completes with no reported errors."""
 
     @classmethod
     def setUpClass(cls):
-        """Create an OSTree repository with a valid feed and sync it."""
-        super(SyncUpdateValidFeedTestCase, cls).setUpClass()
+        """Create an OSTree repository with a valid feed and branches."""
+        super(SyncValidFeedTestCase, cls).setUpClass()
         body = _gen_ostree_repo_body()
         body['importer_config']['feed'] = _VALID_FEED
-        body['importer_config']['branches'] = [_VALID_BRANCH1]
+        body['importer_config']['branches'] = [_VALID_BRANCHES[0]]
         cls.attrs_iter = (create_repository(cls.cfg, body),)  # see parent cls
-        # update 'refs' with new branch
-        cls.update_branch = []
-        _update_branch(
-            cls.cfg,
-            cls.attrs_iter[0]['_href'],
-            _VALID_BRANCH2,
-            cls.update_branch,
-        )
 
         cls.sync_repo = []  # raw responses
         report = sync_repository(
@@ -201,13 +195,10 @@ class SyncUpdateValidFeedTestCase(_BaseTestCase):
         )
         cls.task_bodies = tuple(poll_spawned_tasks(cls.cfg, report))
 
+
     def test_start_sync_code(self):
         """Assert the call to sync a repository returns an HTTP 202."""
         self.assertEqual(self.sync_repo[0].status_code, 202)
-
-    def test_update_code(self):
-        """Assert that branch update on repository returns an HTTP 200."""
-        self.assertEqual(self.update_branch[0].status_code, 200)
 
     def test_task_error(self):
         """Assert each task's "error" field is null."""
@@ -241,7 +232,7 @@ class SyncInvalidFeedBranchTestCase(_BaseTestCase):
         super(SyncInvalidFeedBranchTestCase, cls).setUpClass()
         bodies = tuple(_gen_ostree_repo_body() for _ in range(2))
         bodies[0]['importer_config']['feed'] = uuid4()  # invalid feed
-        bodies[0]['importer_config']['branches'] = [_VALID_BRANCH1]
+        bodies[0]['importer_config']['branches'] = [_VALID_BRANCHES[0]]
         bodies[1]['importer_config']['feed'] = _VALID_FEED
         bodies[1]['importer_config']['branches'] = [uuid4()]  # invalid branch
         cls.attrs_iter = (create_repository(cls.cfg, body) for body in bodies)
@@ -298,7 +289,7 @@ class SyncInvalidFeedBranchTestCase(_BaseTestCase):
         self.assertEqual(len(self.task_bodies), 2)
 
 
-class SyncCopyValidFeedTestCase(_BaseTestCase):
+class UpdateSyncCopyValidFeedTestCase(_BaseTestCase):
     """Create two repos, sync, copy, publish (automatically), check"""
 
     @classmethod
@@ -309,20 +300,39 @@ class SyncCopyValidFeedTestCase(_BaseTestCase):
         check.
         """
         steps = {
+            'update',
             'sync',
             'copy',
+            'distribute',
+            'publish',
             'search units',
         }
         cls.responses = {key: [] for key in steps}
         cls.bodies = {}
         cls.task_bodies = {}
 
-        super(SyncCopyValidFeedTestCase, cls).setUpClass()
+        super(UpdateSyncCopyValidFeedTestCase, cls).setUpClass()
         bodies = tuple(_gen_ostree_repo_body() for _ in range(2))
         bodies[0]['importer_config']['feed'] = _VALID_FEED
-        bodies[0]['importer_config']['branches'] = [_VALID_BRANCH1]
+        bodies[0]['importer_config']['branches'] = [_VALID_BRANCHES[0]]
         cls.attrs_iter = tuple(create_repository(cls.cfg, body)
                                for body in bodies)
+        # sync with first branch
+        cls.bodies['sync'] = sync_repository(
+            cls.cfg,
+            cls.attrs_iter[0]['_href'],
+            cls.responses['sync'],
+        )
+        cls.task_bodies['sync'] = tuple(poll_spawned_tasks(
+            cls.cfg, cls.bodies['sync']))
+        # update branch of repository
+        cls.bodies['update'] = _update_branch(
+            cls.cfg,
+            cls.attrs_iter[0]['_href'],
+            _VALID_BRANCHES[1],
+            cls.responses['update'],
+        )
+        # sync with new branch
         cls.bodies['sync'] = sync_repository(
             cls.cfg,
             cls.attrs_iter[0]['_href'],
@@ -341,17 +351,44 @@ class SyncCopyValidFeedTestCase(_BaseTestCase):
         )
         cls.task_bodies['copy'] = tuple(poll_spawned_tasks(
             cls.cfg, cls.bodies['copy']))
+
+        # add distributor to first repository and publish
+        cls.bodies['distribute'] = _add_ostree_web_distributor(
+            cls.cfg,
+            cls.attrs_iter[0]['_href'],
+            cls.responses['distribute'],
+        )
+        cls.bodies['publish'] = publish_repository(
+            cls.cfg,
+            cls.attrs_iter[0]['_href'],
+            cls.bodies['distribute']['id'],
+            cls.responses['publish'],
+        )
+        tuple(poll_spawned_tasks(cls.cfg, cls.bodies['publish']))
+
         # search for content in both repositories
         cls.bodies['search units'] = tuple((
             _get_units(cls.cfg, attrs['_href'], cls.responses['search units'])
             for attrs in cls.attrs_iter
         ))
-        # print "Search units returned: ", cls.bodies['search units']
+
+        # check that synced files are present on filesystem
+        # client = Client(cls.cfg)
+        # cls.files_status = []
+        # for branch in _VALID_BRANCHES:
+        #     path = ('/var/lib/pulp/published/ostree/web/',
+        #             cls.attrs_iter[0]['_href'])
+        #     cls.file_status.append(
+        #         client.run(('[ -f
+
 
     def test_start_sync_code(self):
         """Assert the call to sync a repository returns an HTTP 202."""
         steps_codes = (
+            ('update', 200),
             ('sync', 202),
+            ('distribute', 201),
+            ('publish', 202),
             ('copy', 202),
             ('search units', 200),
         )
@@ -390,3 +427,6 @@ class SyncCopyValidFeedTestCase(_BaseTestCase):
             set(unit['unit_id'] for unit in self.bodies['search units'][0]),
             set(unit['unit_id'] for unit in self.bodies['search units'][1]),
         )
+
+    def test_units_published(self):
+        """Assert that ostree refs are present in specified path."""
