@@ -3,53 +3,55 @@
 
 .. _content applicability:
     https://pulp.readthedocs.org/en/latest/dev-guide/integration/rest-api/consumer/applicability.html
-
 """
 from __future__ import unicode_literals
 
-import requests
-from pulp_smash.config import get_config
-from pulp_smash.constants import CALL_REPORT_KEYS
+from packaging.version import Version
 from unittest2 import TestCase
 
-_CONSUMER = '/pulp/api/v2/consumers/actions/content/regenerate_applicability/'
-_REPO = '/pulp/api/v2/repositories/actions/content/regenerate_applicability/'
+from pulp_smash import api, config
+from pulp_smash.constants import CALL_REPORT_KEYS, GROUP_CALL_REPORT_KEYS
+
+_PATHS = {
+    'consumer': '/pulp/api/v2/consumers/actions/content/regenerate_applicability/',  # noqa
+    'repo': '/pulp/api/v2/repositories/actions/content/regenerate_applicability/',  # noqa
+}
 
 
 class SuccessTestCase(TestCase):
-    """Generate content applicability for updated consumers and repos."""
+    """Ask Pulp to regenerate content applicability for consumers and repos."""
 
     @classmethod
     def setUpClass(cls):
         """Make calls to the server and save the responses."""
-        cfg = get_config()
-        path_json_pairs = (
-            (_CONSUMER, {'consumer_criteria': {}}),
-            (_REPO, {'repo_criteria': {}})
-        )
-        cls.responses = tuple((
-            requests.post(
-                cfg.base_url + path,
-                json=json,
-                **cfg.get_requests_kwargs()
-            )
-            for path, json in path_json_pairs
-        ))
+        cls.cfg = config.get_config()
+        client = api.Client(cls.cfg, api.echo_handler)
+        cls.responses = {
+            key: client.post(path, {key + '_criteria': {}})
+            for key, path in _PATHS.items()
+        }
 
     def test_status_code(self):
-        """Assert that the responses have HTTP 202 status codes."""
-        for i, response in enumerate(self.responses):
-            with self.subTest(i):
+        """Assert each response has an HTTP 202 status code."""
+        for key, response in self.responses.items():
+            with self.subTest(key=key):
                 self.assertEqual(response.status_code, 202)
 
     def test_body(self):
-        """Assert that the responses are JSON and appear to be call reports."""
-        for i, response in enumerate(self.responses):
-            with self.subTest(i):
-                self.assertEqual(
-                    frozenset(response.json().keys()),
-                    CALL_REPORT_KEYS,
-                )
+        """Assert each response is JSON and has a correct structure.
+
+        Regenerating content applicability returns a call report in most cases.
+        For Pulp 2.8 and beyond, regenerating repository content applicability
+        returns a group call report. See `issue #1448
+        <https://pulp.plan.io/issues/1448>`_.
+        """
+        for key, response in self.responses.items():
+            with self.subTest(key=key):
+                response_keys = frozenset(response.json().keys())
+                if key == 'repo' and self.cfg.version >= Version('2.8'):
+                    self.assertEqual(response_keys, GROUP_CALL_REPORT_KEYS)
+                else:
+                    self.assertEqual(response_keys, CALL_REPORT_KEYS)
 
 
 class FailureTestCase(TestCase):
@@ -58,31 +60,21 @@ class FailureTestCase(TestCase):
     @classmethod
     def setUpClass(cls):
         """Make calls to the server and save the responses."""
-        cfg = get_config()
-        path_json_pairs = (
-            (_CONSUMER, {'consumer_criteriaa': {}}),
-            (_REPO, {'repo_criteriaa': {}})
-        )
-        cls.responses = tuple((
-            requests.post(
-                cfg.base_url + path,
-                json=json,
-                **cfg.get_requests_kwargs()
-            )
-            for path, json in path_json_pairs
-        ))
+        client = api.Client(config.get_config(), api.echo_handler)
+        cls.responses = {
+            key: client.post(path, {key + '_criteriaa': {}})
+            for key, path in _PATHS.items()
+        }
 
     def test_status_code(self):
-        """Assert that each response has an HTTP 400 status code."""
-        for i, response in enumerate(self.responses):
-            with self.subTest(i):
+        """Assert each response has an HTTP 400 status code."""
+        for key, response in self.responses.items():
+            with self.subTest(key=key):
                 self.assertEqual(response.status_code, 400)
 
     def test_body(self):
-        """Assert that the responses are JSON and appear to be call reports."""
-        for i, resp in enumerate(self.responses):
-            with self.subTest(i):
-                self.assertNotEqual(
-                    frozenset(resp.json().keys()),
-                    CALL_REPORT_KEYS,
-                )
+        """Assert each response is JSON and doesn't look like a call report."""
+        for key, response in self.responses.items():
+            with self.subTest(key=key):
+                response_keys = frozenset(response.json().keys())
+                self.assertNotEqual(response_keys, CALL_REPORT_KEYS)

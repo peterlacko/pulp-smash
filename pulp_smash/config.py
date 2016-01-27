@@ -6,16 +6,18 @@ systems. For example, it needs to know the protocol, hostname and port of a
 Pulp server (e.g. 'https://example.com:250') and how to authenticate with that
 server. :class:`pulp_smash.config.ServerConfig` eases the task of managing that
 information.
-
 """
 from __future__ import unicode_literals
 
 import json
 import os
 from copy import deepcopy
-from packaging.version import Version
 from threading import Lock
+
+from packaging.version import Version
 from xdg import BaseDirectory
+
+from pulp_smash import exceptions
 
 
 # `get_config` uses this as a cache. It is intentionally a global. This design
@@ -41,7 +43,6 @@ def get_config():
 
     :returns: A copy of the global server configuration object.
     :rtype: pulp_smash.config.ServerConfig
-
     """
     global _CONFIG  # pylint:disable=global-statement
     if _CONFIG is None:
@@ -49,11 +50,7 @@ def get_config():
     return deepcopy(_CONFIG)
 
 
-class ConfigFileNotFoundError(Exception):
-    """Indicates that the requested XDG configuration file cannot be found."""
-
-
-class ServerConfig(object):
+class ServerConfig(object):  # pylint:disable=too-many-instance-attributes
     """Facts about a server, plus methods for manipulating those facts.
 
     This object stores a set of facts that are used when communicating with a
@@ -110,14 +107,36 @@ class ServerConfig(object):
         server. For example: ``('username', 'password')``.
     :param verify: A boolean. Should SSL be verified when communicating with
         the server?
+    :param version: A string, such as '1.2' or '0.8.rc3'. Defaults to '1!0'
+        (epoch 1, version 0). Must be compatible with the `packaging`_
+        library's ``packaging.version.Version`` class.
+    :param cli_transport: Either 'local' or 'ssh'. See
+        :class:`pulp_smash.cli.Client` for details.
 
+    .. _packaging: https://packaging.pypa.io/en/latest/
     """
+
+    # Pylint reasonably warns that this class has too many arguments and
+    # instance attributes. How can we fix that problem? This class has the dual
+    # responsibilities of housing information about a server and being able to
+    # (de)serialize that information from and to config files, and the first
+    # responsibility is the dangerous one. It's easy to let configuration
+    # options collect here. Most CLI options are pushed out into an ssh_config
+    # file. And the few API options that live here, like `verify`, just
+    # shouldn't be code.
 
     # Used to lock access to the configuration file when performing destructive
     # operations, such as saving.
     _file_lock = Lock()
 
-    def __init__(self, base_url=None, auth=None, verify=None, version=None):  # noqa
+    def __init__(  # pylint:disable=too-many-arguments
+            self,
+            base_url=None,
+            auth=None,
+            verify=None,
+            version=None,
+            cli_transport=None):
+        """Initialize this object with needed instance attributes."""
         self.base_url = base_url
         self.auth = auth
         self.verify = verify
@@ -125,6 +144,7 @@ class ServerConfig(object):
             self.version = Version('1!0')
         else:
             self.version = Version(version)
+        self.cli_transport = cli_transport
 
         self._section = 'default'
         self._xdg_config_file = os.environ.get(
@@ -153,7 +173,6 @@ class ServerConfig(object):
         :param xdg_config_dir: A string. The XDG configuration directory in
             which the configuration file resides.
         :returns: Nothing.
-
         """
         # What will we write out?
         if section is None:
@@ -195,7 +214,6 @@ class ServerConfig(object):
         :param xdg_config_dir: A string. The XDG configuration directory in
             which the configuration file resides.
         :returns: Nothing.
-
         """
         # What will we delete?
         if section is None:
@@ -227,7 +245,6 @@ class ServerConfig(object):
             which the configuration file resides.
         :returns: An iterable of strings. Each string is the name of a
             configuration file section.
-
         """
         # What file is being manipulated?
         if xdg_config_file is None:
@@ -250,7 +267,6 @@ class ServerConfig(object):
         :returns: A new :class:`pulp_smash.config.ServerConfig` object. The
             current object is not modified by this method.
         :rtype: ServerConfig
-
         """
         # What section is being read?
         if section is None:
@@ -297,10 +313,9 @@ class ServerConfig(object):
         But this latter approach is more fragile. The user must remember to
         convert ``auth`` to a tuple, and it will require maintenance if ``cfg``
         gains or loses attributes.
-
         """
         attrs = _public_attrs(self)
-        for key in ('base_url', 'version'):
+        for key in ('base_url', 'cli_transport', 'version'):
             del attrs[key]
         if attrs['auth'] is not None:
             attrs['auth'] = tuple(attrs['auth'])
@@ -320,15 +335,14 @@ def _get_config_file_path(xdg_config_dir, xdg_config_file):
     :param xdg_config_file: A string. The name of the configuration file that
         is being searched for.
     :returns: A string. A path to a configuration file.
-    :raises pulp_smash.config.ConfigFileNotFoundError: If the requested
+    :raises pulp_smash.exceptions.ConfigFileNotFoundError: If the requested
         configuration file cannot be found.
-
     """
     for config_dir in BaseDirectory.load_config_paths(xdg_config_dir):
         path = os.path.join(config_dir, xdg_config_file)
         if os.path.isfile(path):
             return path
-    raise ConfigFileNotFoundError(
+    raise exceptions.ConfigFileNotFoundError(
         'No configuration files could be located after searching for a file '
         'named "{0}" in the standard XDG configuration paths, such as '
         '"~/.config/{1}/".'.format(xdg_config_file, xdg_config_dir)

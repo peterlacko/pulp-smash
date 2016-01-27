@@ -6,7 +6,6 @@ For more information, see:
 
 * https://packaging.python.org/en/latest/index.html
 * https://docs.python.org/distutils/sourcedist.html
-
 """
 from __future__ import unicode_literals
 
@@ -42,6 +41,13 @@ setup(
         'Programming Language :: Python :: 3.5',
     ],
     packages=find_packages(),
-    install_requires=['mock', 'packaging', 'pyxdg', 'requests', 'unittest2'],
+    install_requires=[
+        'mock',
+        'packaging',
+        'plumbum',
+        'pyxdg',
+        'requests',
+        'unittest2',
+    ],
     test_suite='tests',
 )
