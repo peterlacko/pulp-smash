@@ -27,6 +27,7 @@ following trees of assumptions are explored in this module::
 
 from __future__ import unicode_literals
 
+
 from itertools import chain
 from pulp_smash import api, utils
 from pulp_smash.config import get_config
