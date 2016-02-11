@@ -1,5 +1,5 @@
 # coding utf-8
-"""Test the functionality of syncing RPM repos with remove-unit option set.
+"""Test the functionality in RPM repos when `remove_missing`_ is set to True.
 
 Following steps are executed in order to test correct functionality
 of repository created with valid feed and remove_missing option set.
@@ -13,9 +13,11 @@ of repository created with valid feed and remove_missing option set.
 4. Remove random unit from repository foo and publish.
 5. Sync bar repo (RemoveMissingFalseTestCase, RemoveMissingFalseTestCase).
 6. Assert that:
-    * when remove_missing=True, content of foo and bar is same
-    * when remove_missing=False, content of foo and bar differ
+    * when rm_missing=True, content of foo and bar is same
+    * when rm_missing=False, content of foo and bar differ
 
+.. _remove missing:
+    https://pulp-rpm.readthedocs.org/en/latest/tech-reference/yum-plugins.html
 """
 
 from __future__ import unicode_literals
@@ -61,23 +63,6 @@ def _gen_distributor():
     }
 
 
-class _BaseTestCase(unittest2.TestCase):
-    """Provide a server config, and tear down created resources."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Provide a server config and an iterable of resources to delete."""
-        cls.cfg = config.get_config()
-        cls.resources = set()
-
-    @classmethod
-    def tearDownClass(cls):
-        """Delete created resources."""
-        client = api.Client(cls.cfg)
-        for resource in cls.resources:
-            client.delete(resource)
-
-
 class _CommonTestsMixin(object):
     """Common tests for RemoveMissing* classes."""
 
@@ -113,8 +98,7 @@ class _CommonTestsMixin(object):
             with self.subTest(i=i):
                 self.assertEqual(
                     task['progress_report']['yum_importer']['content']['error_details'],  # noqa pylint:disable=line-too-long
-                    []
-                )
+                    [])
 
     def test_units_before_removal(self):
         """Test that units in repositories before removal are the same."""
@@ -135,24 +119,29 @@ class _CommonTestsMixin(object):
         self.assertNotIn(self.removed_unit, units_names)
 
 
-class _RemoveMissingTestCase(_BaseTestCase):
+class _BaseTestCase(unittest2.TestCase):
     """Parent class for RemoveMissingTrueTestCase and RemoveMissingFalseTestCase.
 
-    Provides common functionality shared by both child classes.
-    Following steps are executed:
-        1. Create repository foo with feed, sync and publish it.
-        2. Create repository bar with foo as a feed and run sync.
-        3. Get content of both repositories.
-        4. Remove random unit from repository foo and publish foo.
-        5. Sync repository bar.
-        6. Get content of both repositories.
-
+    Provides server config, tear down created resources and common
+    functionality shared by child classes.
     """
 
     @classmethod
-    def setUpClass(cls, remove_missing=False):  # noqa pylint:disable=arguments-differ,line-too-long
-        """Create two repositories, first is feed of second one."""
-        super(_RemoveMissingTestCase, cls).setUpClass()
+    def setUpClass(cls, rm_missing=False):  # pylint:disable=arguments-differ
+        """Create two repositories, first is feed of second one.
+
+        Provides server config and set of iterable to delete.
+        Following steps are executed:
+            1. Create repository foo with feed, sync and publish it.
+            2. Create repository bar with foo as a feed and run sync.
+            3. Get content of both repositories.
+            4. Remove random unit from repository foo and publish foo.
+            5. Sync repository bar.
+            6. Get content of both repositories.
+        """
+        cls.cfg = config.get_config()
+        cls.resources = set()
+
         cls.responses = {}
         cls.task_bodies = {}
         client = api.Client(cls.cfg, api.safe_handler)
@@ -188,7 +177,7 @@ class _RemoveMissingTestCase(_BaseTestCase):
             _PUBLISH_DIR +
             cls.responses['distribute'].json()['config']['relative_url'],
         )
-        bodies[1]['importer_config']['remove_missing'] = remove_missing
+        bodies[1]['importer_config']['remove_missing'] = rm_missing
         # Create and sync second repo
         repos.append(client.post(REPOSITORY_PATH, bodies[1]).json())
         sync_path = urljoin(repos[1]['_href'], 'actions/sync/')
@@ -212,12 +201,11 @@ class _RemoveMissingTestCase(_BaseTestCase):
         cls.responses['remove unit'] = client.post(
             urljoin(repos[0]['_href'], 'actions/unassociate/'),
             {'criteria':
-             {'fields':
-              {'unit': ['name', 'epoch', 'version', 'release',
-                        'arch', 'checksum', 'checksumtype']},
-              'type_ids': ['rpm'],
-              'filters': {'unit': {'name': cls.removed_unit}}}},
-        )
+                {'fields':
+                    {'unit': ['name', 'epoch', 'version', 'release',
+                              'arch', 'checksum', 'checksumtype']},
+                    'type_ids': ['rpm'],
+                    'filters': {'unit': {'name': cls.removed_unit}}}},)
         cls.task_bodies['remove unit'] = []
         cls.task_bodies['remove unit'] += tuple(utils.poll_spawned_tasks(
             cls.cfg, cls.responses['remove unit'].json()))
@@ -241,14 +229,21 @@ class _RemoveMissingTestCase(_BaseTestCase):
         for repo in repos:
             cls.resources.add(repo['_href'])
 
+    @classmethod
+    def tearDownClass(cls):
+        """Delete created resources."""
+        client = api.Client(cls.cfg)
+        for resource in cls.resources:
+            client.delete(resource)
 
-class RemoveMissingTrueTestCase(_CommonTestsMixin, _RemoveMissingTestCase):
+
+class RemoveMissingTrueTestCase(_CommonTestsMixin, _BaseTestCase):
     """Test correct functionality with remove-missing option enabled."""
 
     @classmethod
     def setUpClass(cls):  # pylint:disable=arguments-differ
         """Create two repositories for functionality testing."""
-        super(RemoveMissingTrueTestCase, cls).setUpClass(remove_missing=True)
+        super(RemoveMissingTrueTestCase, cls).setUpClass(rm_missing=True)
 
     def test_units_after_removal(self):
         """Test that units in repositories after removal are the same."""
@@ -260,24 +255,24 @@ class RemoveMissingTrueTestCase(_CommonTestsMixin, _RemoveMissingTestCase):
             set(unit['unit_id'] for unit in bodies[1]
                 if unit['unit_type_id'] == 'rpm'),  # due to hard-coded
         )  # indices. But the data is complex, and this makes things simpler.
-
-
-class RemoveMissingFalseTestCase(_CommonTestsMixin, _RemoveMissingTestCase):
-    """Test correct functionality with remove-missing option disabled."""
-
-    @classmethod
-    def setUpClass(cls):  # pylint:disable=arguments-differ
-        """Create two repositories for functionality testing."""
-        super(RemoveMissingFalseTestCase, cls).setUpClass(remove_missing=False)
-
-    def test_units_after_removal(self):
-        """Test that units of second repository did not change."""
-        body_before = self.responses['units before removal'][1].json()
-        body_after = self.responses['units after removal'][1].json()
-        # Package category and package group will differ so we count only RPMs
-        self.assertEqual(
-            set(unit['unit_id'] for unit in body_before
-                if unit['unit_type_id'] == 'rpm'),  # This test is fragile
-            set(unit['unit_id'] for unit in body_after
-                if unit['unit_type_id'] == 'rpm'),  # due to hard-coded
-        )  # indices. But the data is complex, and this makes things simpler.
+#
+#
+# class RemoveMissingFalseTestCase(_CommonTestsMixin, _BaseTestCase):
+#    """Test correct functionality with remove-missing option disabled."""
+#
+#    @classmethod
+#    def setUpClass(cls):  # pylint:disable=arguments-differ
+#        """Create two repositories for functionality testing."""
+#        super(RemoveMissingFalseTestCase, cls).setUpClass(rm_missing=False)
+#
+#    def test_units_after_removal(self):
+#        """Test that units of second repository did not change."""
+#        body_before = self.responses['units before removal'][1].json()
+#        body_after = self.responses['units after removal'][1].json()
+#        # Package category and package group will differ so we count only RPMs
+#        self.assertEqual(
+#            set(unit['unit_id'] for unit in body_before
+#                if unit['unit_type_id'] == 'rpm'),  # This test is fragile
+#            set(unit['unit_id'] for unit in body_after
+#                if unit['unit_type_id'] == 'rpm'),  # due to hard-coded
+#        )  # indices. But the data is complex, and this makes things simpler.
