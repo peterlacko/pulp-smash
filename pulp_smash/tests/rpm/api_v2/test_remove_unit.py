@@ -85,22 +85,6 @@ class _CommonTestsMixin(object):
             with self.subTest(step=step):
                 self.assertEqual(self.responses[step].status_code, code)
 
-    def test_task_error_traceback(self):
-        """Assert each task's "error" and "traceback" fields are null."""
-        for action in {'sync', 'remove unit'}:
-            for i, task in enumerate(self.task_bodies[action]):
-                for key in {'error', 'traceback'}:
-                    with self.subTest((i, key)):
-                        self.assertIsNone(task[key])
-
-    def test_task_progress_report(self):
-        """Assert no task's progress report contains error details."""
-        for i, task in enumerate(self.task_bodies['sync']):
-            with self.subTest(i=i):
-                self.assertEqual(
-                    task['progress_report']['yum_importer']['content']['error_details'],  # noqa pylint:disable=line-too-long
-                    [])
-
     def test_units_before_removal(self):
         """Test that units in repositories before removal are the same."""
         bodies = [re.json() for re in self.responses['units before removal']]
@@ -144,7 +128,6 @@ class _BaseTestCase(unittest2.TestCase):
         cls.resources = set()
 
         cls.responses = {}
-        cls.task_bodies = {}
         client = api.Client(cls.cfg, api.safe_handler)
 
         bodies = tuple((_gen_repo() for _ in range(2)))
@@ -157,9 +140,6 @@ class _BaseTestCase(unittest2.TestCase):
         cls.responses['sync'].append(client.post(
             sync_path, {'override_config': {}}
         ))
-        cls.task_bodies['sync'] = []
-        cls.task_bodies['sync'] += tuple(utils.poll_spawned_tasks(
-            cls.cfg, cls.responses['sync'][-1].json()))
         # Add distributor and publish
         cls.responses['distribute'] = client.post(
             urljoin(repos[0]['_href'], 'distributors/'),
@@ -185,8 +165,6 @@ class _BaseTestCase(unittest2.TestCase):
         cls.responses['sync'].append(client.post(
             sync_path, {'override_config': {}}
         ))
-        cls.task_bodies['sync'] += tuple(utils.poll_spawned_tasks(
-            cls.cfg, cls.responses['sync'][-1].json()))
         # Get content of both repositories
         body = {'criteria': {}}
         cls.responses['units before removal'] = [
@@ -207,9 +185,6 @@ class _BaseTestCase(unittest2.TestCase):
                               'arch', 'checksum', 'checksumtype']},
                     'type_ids': ['rpm'],
                     'filters': {'unit': {'name': cls.removed_unit}}}},)
-        cls.task_bodies['remove unit'] = []
-        cls.task_bodies['remove unit'] += tuple(utils.poll_spawned_tasks(
-            cls.cfg, cls.responses['remove unit'].json()))
         # Publish first repo again
         cls.responses['publish'].append(client.post(
             urljoin(repos[0]['_href'], 'actions/publish/'),
@@ -220,8 +195,6 @@ class _BaseTestCase(unittest2.TestCase):
         cls.responses['sync'].append(client.post(
             sync_path, {'override_config': {}}
         ))
-        cls.task_bodies['sync'] += tuple(utils.poll_spawned_tasks(
-            cls.cfg, cls.responses['sync'][-1].json()))
         # Search for units in both repositories again
         cls.responses['units after removal'] = [
             client.post(urljoin(repo['_href'], 'search/units/'), body)
@@ -256,24 +229,3 @@ class RemoveMissingTrueTestCase(_CommonTestsMixin, _BaseTestCase):
             set(unit['unit_id'] for unit in bodies[1]
                 if unit['unit_type_id'] == 'rpm'),  # due to hard-coded
         )  # indices. But the data is complex, and this makes things simpler.
-#
-#
-# class RemoveMissingFalseTestCase(_CommonTestsMixin, _BaseTestCase):
-#    """Test correct functionality with remove-missing option disabled."""
-#
-#    @classmethod
-#    def setUpClass(cls):  # pylint:disable=arguments-differ
-#        """Create two repositories for functionality testing."""
-#        super(RemoveMissingFalseTestCase, cls).setUpClass(rm_missing=False)
-#
-#    def test_units_after_removal(self):
-#        """Test that units of second repository did not change."""
-#        body_before = self.responses['units before removal'][1].json()
-#        body_after = self.responses['units after removal'][1].json()
-#        # Package category and package group will differ so we count only RPMs
-#        self.assertEqual(
-#            set(unit['unit_id'] for unit in body_before
-#                if unit['unit_type_id'] == 'rpm'),  # This test is fragile
-#            set(unit['unit_id'] for unit in body_after
-#                if unit['unit_type_id'] == 'rpm'),  # due to hard-coded
-#        )  # indices. But the data is complex, and this makes things simpler.
