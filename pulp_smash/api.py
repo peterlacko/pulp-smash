@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover
 
 import requests
 
-from pulp_smash import utils
+from pulp_smash import exceptions, utils
 
 
 _SENTINEL = object()
@@ -44,11 +44,34 @@ def _warn_http_202_content_type(response):
     warnings.warn(message, RuntimeWarning)
 
 
+def _check_call_report(call_report):
+    """Check that error field of Call report is not none."""
+    if call_report['error'] is not None:
+        raise exceptions.CallReportError(
+            'Call report failed with error:{}'.format(
+                str(call_report['error'])))
+
+
+def _check_tasks(tasks):
+    for task in tasks:
+        for field in ('error', 'traceback', 'exception'):
+            if task[field] is not None:
+                raise exceptions.TaskReportError(
+                    'Task {} failed. Error: {}\nTraceback: {}\nException: {}'
+                    .format(task['_href'],
+                            str(task['error']),
+                            str(task['traceback']),
+                            str(task['exception'])))
+
+
 def _handle_202(server_config, response):
     """Check for an HTTP 202 response and handle it appropriately."""
     if response.status_code == 202:  # "Accepted"
         _check_http_202_content_type(response)
-        tuple(utils.poll_spawned_tasks(server_config, response.json()))
+        call_report = response.json()
+        tasks = tuple(utils.poll_spawned_tasks(server_config, call_report))
+        _check_call_report(call_report)
+        _check_tasks(tasks)
 
 
 def echo_handler(server_config, response):  # pylint:disable=unused-argument
@@ -59,7 +82,8 @@ def echo_handler(server_config, response):  # pylint:disable=unused-argument
 def safe_handler(server_config, response):
     """Check the response status code and wait for tasks to complete.
 
-    Raise an exception if the response has an HTTP 4XX or 5XX status code. Wait
+    Raise an exception if the response has an HTTP 4XX or 5XX status code,
+    or if Call Report or Task Report contain an error. Wait
     for tasks to complete if the response has an HTTP Accepted status code.
     Return the response.
     """
